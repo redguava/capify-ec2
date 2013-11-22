@@ -119,7 +119,7 @@ class CapifyEc2
       status_output = []
       status_output << "%02d:" % i
       status_output << (instance.name || '')                               .ljust( column_widths[:name]    ).green
-      status_output << instance.id                                         .ljust( 2                       ).red
+      status_output << instance[0].id                                         .ljust( 2                       ).red
       status_output << instance.flavor_id                                  .ljust( column_widths[:type]    ).cyan
       status_output << instance.contact_point                              .ljust( column_widths[:dns]     ).blue.bold
       status_output << instance.availability_zone                          .ljust( 10                      ).magenta
@@ -161,11 +161,15 @@ class CapifyEc2
   end
 
   def get_instance_by_dns(dns)
-    desired_instances.select {|instance| instance.dns_name == dns}.first
+    desired_instances.select do |instance|
+      # Need to add some logic in here that makes a little more sense...
+      #instance.dns_name == dns.first
+      instance.private_ip_address == dns
+    end
   end
 
   def instance_health(load_balancer, instance)
-    elb.describe_instance_health(load_balancer.id, instance.id).body['DescribeInstanceHealthResult']['InstanceStates'][0]['State']
+    elb.describe_instance_health(load_balancer.id, instance[0].id).body['DescribeInstanceHealthResult']['InstanceStates'][0]['State']
   end
 
   def elb
@@ -193,10 +197,10 @@ class CapifyEc2
     return unless @ec2_config[:load_balanced]
     instance = get_instance_by_name(instance_name)
     return if instance.nil?
-    @@load_balancer = get_load_balancer_by_instance(instance.id)
+    @@load_balancer = get_load_balancer_by_instance(instance[0].id)
     return if @@load_balancer.nil?
 
-    elb.deregister_instances_from_load_balancer(instance.id, @@load_balancer.id)
+    elb.deregister_instances_from_load_balancer(instance[0].id, @@load_balancer.id)
   end
 
   def register_instance_in_elb(instance_name, load_balancer_name = '')
@@ -206,7 +210,7 @@ class CapifyEc2
     load_balancer =  get_load_balancer_by_name(load_balancer_name) || @@load_balancer
     return if load_balancer.nil?
 
-    elb.register_instances_with_load_balancer(instance.id, load_balancer.id)
+    elb.register_instances_with_load_balancer(instance[0].id, load_balancer.id)
 
     fail_after = @ec2_config[:fail_after] || 30
     state = instance_health(load_balancer, instance)
@@ -228,12 +232,13 @@ class CapifyEc2
 
   def deregister_instance_from_elb_by_dns(server_dns)
     instance = get_instance_by_dns(server_dns)
-    load_balancer = get_load_balancer_by_instance(instance.id)
+    load_balancer = get_load_balancer_by_instance(instance[0].id)
+    puts "FAILING"
 
     if load_balancer
       puts "[Capify-EC2] Removing instance from ELB '#{load_balancer.id}'..."
 
-      result = elb.deregister_instances_from_load_balancer(instance.id, load_balancer.id)
+      result = elb.deregister_instances_from_load_balancer(instance[0].id, load_balancer.id)
       raise "Unable to remove instance from ELB '#{load_balancer.id}'..." unless result.status == 200
 
       return load_balancer
@@ -247,7 +252,7 @@ class CapifyEc2
     sleep 10
 
     puts "[Capify-EC2] Re-registering instance with ELB '#{load_balancer.id}'..."
-    result = elb.register_instances_with_load_balancer(instance.id, load_balancer.id)
+    result = elb.register_instances_with_load_balancer(instance[0].id, load_balancer.id)
 
     raise "Unable to re-register instance with ELB '#{load_balancer.id}'..." unless result.status == 200
 
